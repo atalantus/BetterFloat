@@ -599,13 +599,13 @@ async function caseHardenedDetection(container: Element, item: Skinport.Item) {
         }</div><div><a ${
             sale.url == 'No Link Available'
                 ? 'style="pointer-events: none;cursor: default;"><img src="' +
-                  extensionSettings.runtimePublicURL +
-                  '/ban-solid.svg" style="filter: brightness(0) saturate(100%) invert(44%) sepia(56%) saturate(7148%) hue-rotate(359deg) brightness(102%) contrast(96%);'
+                extensionSettings.runtimePublicURL +
+                '/ban-solid.svg" style="filter: brightness(0) saturate(100%) invert(44%) sepia(56%) saturate(7148%) hue-rotate(359deg) brightness(102%) contrast(96%);'
                 : 'href="' +
-                  (!isNaN(Number(sale.url)) ? 'https://s.csgofloat.com/' + sale.url + '-front.png' : sale.url) +
-                  '" target="_blank"><img src="' +
-                  extensionSettings.runtimePublicURL +
-                  '/camera-solid.svg" style="translate: 0px 1px; filter: brightness(0) saturate(100%) invert(73%) sepia(57%) saturate(1739%) hue-rotate(164deg) brightness(92%) contrast(84%); margin-right: 5px;'
+                (!isNaN(Number(sale.url)) ? 'https://s.csgofloat.com/' + sale.url + '-front.png' : sale.url) +
+                '" target="_blank"><img src="' +
+                extensionSettings.runtimePublicURL +
+                '/camera-solid.svg" style="translate: 0px 1px; filter: brightness(0) saturate(100%) invert(73%) sepia(57%) saturate(1739%) hue-rotate(164deg) brightness(92%) contrast(84%); margin-right: 5px;'
         }height: 20px;"></img></a></div></div>`;
     }
     let tableHTML = `<div class="ItemHistoryList">${tableHeader}${tableBody}</div>`;
@@ -989,8 +989,24 @@ async function solveCaptcha(saleId: Skinport.Listing['saleId']) {
 }
 
 async function orderItem(item: Skinport.Listing) {
+    const res = {
+        success: false,
+        csrf: -1,
+        cartAdd: -1,
+        captcha: -1,
+        createOrder: -1,
+        total: -1,
+    };
+
     console.debug('[BetterFloat] Trying to order item ', item.saleId);
+
+    const t1 = performance.now();
+
     const csrfToken = await getSpCSRF();
+
+    const t2 = performance.now();
+    res.csrf = t2 - t1;
+
     const postData = encodeURI(`sales[0][id]=${item.saleId}&sales[0][price]=${(item.price * 100).toFixed(0)}&_csrf=${csrfToken}`);
 
     return await fetch('https://skinport.com/api/cart/add', {
@@ -1001,9 +1017,16 @@ async function orderItem(item: Skinport.Listing) {
         .then((response) => response.json())
         .then(async (response) => {
             if (response.success) {
+                const t3 = performance.now();
+                res.cartAdd = t3 - t2;
+
                 const captchaToken = await solveCaptcha(item.saleId);
+
+                const t4 = performance.now();
+                res.captcha = t4 - t3;
+
                 if (!captchaToken) {
-                    return false;
+                    return res;
                 }
                 console.debug('[BetterFloat] OCO addToCart was successful.');
                 const postData = encodeURI(`sales[0]=${item.saleId}&cf-turnstile-response=${captchaToken}&_csrf=${csrfToken}`);
@@ -1014,8 +1037,14 @@ async function orderItem(item: Skinport.Listing) {
                 })
                     .then((response) => response.json())
                     .then(async (response) => {
+                        const t5 = performance.now();
+                        res.createOrder = t5 - t4;
+                        res.total = t5 - t1;
+
                         if (response.success) {
-                            return true;
+                            res.success = true;
+
+                            return res;
                         } else {
                             console.debug(`[BetterFloat] OCO createOrder failed ${response.message}`);
                             showMessageBox('Failed to create the order', response.message);
@@ -1025,19 +1054,19 @@ async function orderItem(item: Skinport.Listing) {
                                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                                 body: encodeURI(`item=${item.saleId}&_csrf=${csrfToken}`),
                             });
-                            return false;
+                            return res;
                         }
                     });
             } else {
                 console.debug(`[BetterFloat] OCO addToCart failed ${response.message}`);
                 // same message as Skinport would show on 'ADD TO CART'
                 showMessageBox('Item is sold or not listed', 'The item you try to add to the cart is not available anymore.');
-                return false;
+                return res;
             }
         })
         .catch((error) => {
             console.warn('[BetterFloat] OCO - addToCart error:', error);
-            return false;
+            return res;
         });
 }
 
@@ -1059,9 +1088,7 @@ function addInstantOrder(item: Skinport.Listing, container: Element) {
             }
             orderItem(item).then((result) => {
                 console.log('[BetterFloat] oneClickOrder result: ', result);
-                if (result) {
-                    showMessageBox('oneClickOrder', 'oneClickOrder was successful.', true);
-                }
+                showMessageBox('oneClickOrder', `oneClickOrder result: ${JSON.stringify(result)}`, result.success);
             });
         };
 
